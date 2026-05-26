@@ -2,7 +2,9 @@
 // Two layouts:
 //   - "table"  → wide horizontal grid (used for the top 4 metric cards)
 //   - "card"   → vertical "label : value" stack (used for per-client clicks)
-// Excludes Last Updated, Red Flags, and Email Domains in both layouts.
+// The metric columns and labels come from `metrics` (discovered from the
+// Sheet header row), so the modal reflects whatever score columns currently
+// live in the Sheet without any code changes.
 // Built on @base-ui/react's Dialog primitive — accessible focus trap, ESC to
 // close, and click-outside dismiss come for free.
 "use client";
@@ -17,20 +19,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { Client, ComponentScore, ComponentScores, HealthStatus } from "@/types/scorecard";
-
-const COMPONENT_FIELDS: Array<{ key: keyof ComponentScores; label: string }> = [
-  { key: "goalMet", label: "Goal Met" },
-  { key: "execEngagement", label: "Exec Engagement" },
-  { key: "execSentiment", label: "Exec Sentiment" },
-  { key: "dmEngagement", label: "DM Engagement" },
-  { key: "dmSentiment", label: "DM Sentiment" },
-  { key: "wbrQbr", label: "WBR/QBR" },
-  { key: "legoAdoption", label: "LEGO Adoption" },
-  { key: "dauMau", label: "DAU/MAU" },
-  { key: "slaCompliance", label: "SLA Compliance" },
-  { key: "projectDelays", label: "Project Delays" },
-];
+import type {
+  Client,
+  ComponentScore,
+  HealthStatus,
+  MetricDefinition,
+} from "@/types/scorecard";
 
 const HEALTH_COLOR: Record<HealthStatus, string> = {
   Healthy: "var(--status-healthy)",
@@ -45,11 +39,15 @@ interface ClientDetailsModalProps {
   onClose: () => void;
   title: string;
   clients: Client[];
+  metrics: MetricDefinition[];
   layout?: ModalLayout;
+  // Fired when the user clicks a numeric score cell. Non-numeric cells
+  // (null / "NA") stay inert.
+  onScoreClick?: (client: Client, metric: MetricDefinition) => void;
 }
 
 function formatScore(s: ComponentScore): string {
-  if (s === null) return "—";
+  if (s === null || s === undefined) return "—";
   if (s === "NA") return "NA";
   return String(s);
 }
@@ -59,7 +57,9 @@ export function ClientDetailsModal({
   onClose,
   title,
   clients,
+  metrics,
   layout = "card",
+  onScoreClick,
 }: ClientDetailsModalProps) {
   const popupWidth = layout === "table" ? "min(95vw,1400px)" : "min(95vw,720px)";
 
@@ -90,11 +90,16 @@ export function ClientDetailsModal({
             {clients.length === 0 ? (
               <p className="py-8 text-center text-sm text-muted-foreground">No clients to show.</p>
             ) : layout === "table" ? (
-              <ClientTable clients={clients} />
+              <ClientTable clients={clients} metrics={metrics} onScoreClick={onScoreClick} />
             ) : (
               <div className="space-y-6">
                 {clients.map((c) => (
-                  <ClientCard key={c.name} client={c} />
+                  <ClientCard
+                    key={c.name}
+                    client={c}
+                    metrics={metrics}
+                    onScoreClick={onScoreClick}
+                  />
                 ))}
               </div>
             )}
@@ -105,7 +110,37 @@ export function ClientDetailsModal({
   );
 }
 
-function ClientTable({ clients }: { clients: Client[] }) {
+// A numeric score becomes a clickable button (drill into reason); "NA" / null
+// render as plain text since there's nothing to explain.
+function ScoreButton({
+  value,
+  onClick,
+}: {
+  value: ComponentScore | number | undefined;
+  onClick?: () => void;
+}) {
+  const text = typeof value === "number" ? String(value) : formatScore(value ?? null);
+  if (!onClick || value === null || value === undefined || value === "NA") return <>{text}</>;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="cursor-pointer rounded px-1 font-bold tabular-nums underline-offset-2 hover:bg-muted hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+    >
+      {text}
+    </button>
+  );
+}
+
+function ClientTable({
+  clients,
+  metrics,
+  onScoreClick,
+}: {
+  clients: Client[];
+  metrics: MetricDefinition[];
+  onScoreClick?: (client: Client, metric: MetricDefinition) => void;
+}) {
   return (
     <Table className="[&_th]:border-r [&_th]:border-border [&_th:last-child]:border-r-0 [&_th]:font-bold [&_th]:text-black [&_td]:border-r [&_td]:border-border [&_td:last-child]:border-r-0 [&_td]:font-bold [&_td]:text-black">
       <TableHeader>
@@ -114,12 +149,11 @@ function ClientTable({ clients }: { clients: Client[] }) {
           <TableHead>Type</TableHead>
           <TableHead>Stage</TableHead>
           <TableHead>ARR</TableHead>
-          {COMPONENT_FIELDS.map((c) => (
-            <TableHead key={c.key} className="text-center">
-              {c.label}
+          {metrics.map((m) => (
+            <TableHead key={m.key} className="text-center">
+              {m.label}
             </TableHead>
           ))}
-          <TableHead className="text-center">Composite</TableHead>
           <TableHead>Health</TableHead>
         </TableRow>
       </TableHeader>
@@ -130,12 +164,14 @@ function ClientTable({ clients }: { clients: Client[] }) {
             <TableCell>{c.clientType}</TableCell>
             <TableCell>{c.stage}</TableCell>
             <TableCell className="tabular-nums">{c.arrDisplay}</TableCell>
-            {COMPONENT_FIELDS.map((col) => (
-              <TableCell key={col.key} className="text-center tabular-nums">
-                {formatScore(c.components[col.key])}
+            {metrics.map((m) => (
+              <TableCell key={m.key} className="text-center tabular-nums">
+                <ScoreButton
+                  value={c.scores[m.key]}
+                  onClick={onScoreClick ? () => onScoreClick(c, m) : undefined}
+                />
               </TableCell>
             ))}
-            <TableCell className="text-center tabular-nums">{c.compositeScore}</TableCell>
             <TableCell>
               <span
                 className="inline-block rounded-full px-2 py-0.5 text-[11px] font-bold text-white"
@@ -151,15 +187,21 @@ function ClientTable({ clients }: { clients: Client[] }) {
   );
 }
 
-function ClientCard({ client }: { client: Client }) {
-  const rows: Array<[string, string | number]> = [
+function ClientCard({
+  client,
+  metrics,
+  onScoreClick,
+}: {
+  client: Client;
+  metrics: MetricDefinition[];
+  onScoreClick?: (client: Client, metric: MetricDefinition) => void;
+}) {
+  // Plain rows (no drill-down) shown first, then the scored rows that route
+  // into the reason popup when clicked.
+  const plainRows: Array<[string, string]> = [
     ["Type", client.clientType],
     ["Stage", client.stage],
     ["ARR", client.arrDisplay],
-    ...COMPONENT_FIELDS.map(
-      (r): [string, string] => [r.label, formatScore(client.components[r.key])],
-    ),
-    ["Composite Score", client.compositeScore],
   ];
 
   return (
@@ -174,10 +216,21 @@ function ClientCard({ client }: { client: Client }) {
         </span>
       </div>
       <dl className="divide-y divide-border">
-        {rows.map(([label, value]) => (
+        {plainRows.map(([label, value]) => (
           <div key={label} className="flex items-center justify-between px-5 py-2.5 text-sm">
             <dt className="font-bold text-black">{label}</dt>
             <dd className="font-bold text-black tabular-nums">{value}</dd>
+          </div>
+        ))}
+        {metrics.map((m) => (
+          <div key={m.key} className="flex items-center justify-between px-5 py-2.5 text-sm">
+            <dt className="font-bold text-black">{m.label}</dt>
+            <dd className="font-bold text-black tabular-nums">
+              <ScoreButton
+                value={client.scores[m.key]}
+                onClick={onScoreClick ? () => onScoreClick(client, m) : undefined}
+              />
+            </dd>
           </div>
         ))}
       </dl>

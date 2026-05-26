@@ -2,19 +2,22 @@
 
 import { getSheetId, getSheetsClient } from "./client";
 import { buildDashboardData } from "./parsers";
-import { SCORECARD_DATA_RANGE } from "./ranges";
+import { SCORECARD_DATA_RANGE, SCORECARD_DETAILS_DATA_RANGE } from "./ranges";
 import type { DashboardData } from "@/types/scorecard";
 
 export async function loadDashboardData(): Promise<DashboardData> {
   const sheets = getSheetsClient();
-  const response = await sheets.spreadsheets.values.get({
+  // batchGet fetches both tabs in a single round trip. Order of `ranges` is
+  // preserved in `valueRanges`, so [0] = Scorecard, [1] = Scorecard Details.
+  const response = await sheets.spreadsheets.values.batchGet({
     spreadsheetId: getSheetId(),
-    range: SCORECARD_DATA_RANGE,
-    // Use what the user sees in the cell (e.g. "$2.5M") instead of raw numbers.
+    ranges: [SCORECARD_DATA_RANGE, SCORECARD_DETAILS_DATA_RANGE],
     valueRenderOption: "FORMATTED_VALUE",
     dateTimeRenderOption: "FORMATTED_STRING",
   });
 
-  const rows = (response.data.values ?? []) as unknown[][];
-  return buildDashboardData(rows);
+  const valueRanges = response.data.valueRanges ?? [];
+  const rows = (valueRanges[0]?.values ?? []) as unknown[][];
+  const detailsRows = (valueRanges[1]?.values ?? []) as unknown[][];
+  return buildDashboardData(rows, detailsRows);
 }

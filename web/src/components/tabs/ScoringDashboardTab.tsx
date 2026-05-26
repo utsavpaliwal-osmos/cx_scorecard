@@ -9,7 +9,14 @@ import { useMemo, useState } from "react";
 import { ClientDetailsModal, type ModalLayout } from "@/components/shared/ClientDetailsModal";
 import { ClientRow } from "@/components/shared/ClientRow";
 import { MetricCard } from "@/components/shared/MetricCard";
-import type { Client, ClientType, DashboardData, SegmentSummary } from "@/types/scorecard";
+import { ScoreReasonPopup } from "@/components/shared/ScoreReasonPopup";
+import type {
+  Client,
+  ClientType,
+  DashboardData,
+  MetricDefinition,
+  SegmentSummary,
+} from "@/types/scorecard";
 
 const SEGMENT_BORDER: Record<ClientType, string> = {
   Strategic: "var(--segment-strategic)",
@@ -33,9 +40,15 @@ interface ModalState {
   layout: ModalLayout;
 }
 
+interface ReasonState {
+  client: Client;
+  metric: MetricDefinition;
+}
+
 export function ScoringDashboardTab({ data }: ScoringDashboardTabProps) {
-  const { totals, segments } = data;
+  const { totals, segments, metrics } = data;
   const [modal, setModal] = useState<ModalState | null>(null);
+  const [reason, setReason] = useState<ReasonState | null>(null);
 
   // Flatten all clients across segments once — used for the top 4 cards
   // which filter by health status across the whole portfolio.
@@ -108,7 +121,15 @@ export function ScoringDashboardTab({ data }: ScoringDashboardTabProps) {
         onClose={() => setModal(null)}
         title={modal?.title ?? ""}
         clients={modal?.clients ?? []}
+        metrics={metrics}
         layout={modal?.layout ?? "card"}
+        onScoreClick={(client, metric) => setReason({ client, metric })}
+      />
+      <ScoreReasonPopup
+        open={reason !== null}
+        onClose={() => setReason(null)}
+        client={reason?.client ?? null}
+        metric={reason?.metric ?? null}
       />
     </section>
   );
